@@ -1,4 +1,6 @@
 from enum import Enum
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import torch
 import numpy as np
 
@@ -75,6 +77,30 @@ class LearningHyperParameter(str, Enum):
     FI_HORIZON = 'fi_horizon_k'
     NUM_SNAPSHOTS = 'num_snapshots'
     META_HIDDEN = 'meta_hidden'
+    SSM_SIZE= "ssm_size"
+    SSM_LR_BASE="ssm_lr_base"
+    LR_FACTOR="lr_factor"
+    N_BLOCKS="blocks"
+    CONJ_SYM="conj_sym"
+    D_MODEL="d_model"
+    C_INIT="C_init"
+    DISCRETIZATION="discretization"
+    DT_MIN="dt_min"
+    DT_MAX="dt_max"
+    CLIP_EIGS="clip_eigs"
+    BIDIRECTIONAL="bidirectional"
+    N_LAYERS="n_layers"
+    N_MSG_LAYERS="n_message_layers"
+    N_BOOK_PRE_LAYERS="n_book_pre_layers"
+    N_BOOK_POST_LAYERS="n_book_post_layers"
+    ACT_FUNC="activation_fn"
+    CLASS_MODE="cls_mode" #mean pool or last element (of sequence dim)
+    PRENORM="prenorm"
+    BATCHNORM="batchnorm"
+    BN_MOMENTUM="bn_momentum"
+    OPTIM_CONFIG="opt_config"
+    DT_GLOBAL="dt_global"
+
 
 
 class STK_OPEN(str, Enum):
@@ -88,6 +114,36 @@ class Optimizers(Enum):
     ADAM = "Adam"
     RMSPROP = "RMSprop"
     SGD = "SGD"
+
+#MODEL choices, mostly for S5 models. 
+class C_Initialisers(Enum):
+    TRUNC="trunc_standard_normal"
+    LECUN="lecun_normal"
+    COMPLEX="complex_normal"
+
+class ClassificationModes(Enum):
+    POOL="pool"
+    LAST="last"
+
+class ActivationFunctions(Enum):
+    FULLGLU="full_glu"
+    HALFGLU1="half_glu1"
+    HALFGLU2="half_glu2"
+    GELU="gelu"
+
+class OptimisationConfigurations(Enum):
+    STANDARD="standard"
+    BANDCDECAY="BandCdecay"
+    BFASTCDECAY="BfastandCdecay"
+    NOBCDECAY="noBCdecay"
+
+class DiscretizationMethods(Enum):
+    ZOH="zoh"
+    BILINEAR="bilinear"
+
+
+
+
 
 
 class Metrics(Enum):
@@ -182,6 +238,10 @@ class Models(str, Enum):
     METALOB = "MetaLOB"
     MAJORITY = "Majority"
 
+    S5BOOK= "S5_Book"
+    S5MSGS="S5_Messages"
+    S5MSGSBOOK="S5_Messages_Book"
+
 
 class DatasetFamily(str, Enum):
     FI = "FI"
@@ -239,7 +299,7 @@ class Periods(dict, Enum):
     }
 
     JULY2021 = {
-        'first_day': '2021-07-01', 'last_day': '2021-08-06',
+        'first_day': '2021-07-01', 'last_day': '2021-07-15',
         'train': ('2021-07-01', '2021-07-08'),  # 'train': ('2021-07-01', '2021-07-22'),
         'val':   ('2021-07-09', '2021-07-12'),  # 'val': ('2021-07-23', '2021-07-29'),
         'test':  ('2021-07-13', '2021-07-15'),  # 'test': ('2021-07-30', '2021-08-06'),
@@ -305,16 +365,19 @@ class ExpIndependentVariables(Enum):
 N_LOB_LEVELS = 10
 NUM_CLASSES = 3
 
+
+N_DATA_WORKERS=128
 DEVICE_TYPE = 'cuda' if torch.cuda.is_available() else 'cpu'
 NUM_GPUS = None if DEVICE_TYPE == 'cpu' else torch.cuda.device_count()
+print(DEVICE_TYPE, NUM_GPUS)
 
 PROJECT_NAME = "LOB-CLASSIFIERS-({})"
 DIR_EXPERIMENTS = "data/experiments/" + PROJECT_NAME
 DIR_SAVED_MODEL = "data/saved_models/" + PROJECT_NAME
 
-DATA_SOURCE = "data/"
-DATASET_LOBSTER = "LOBSTER_6/unzipped/"
-DATASET_FI = "FI-2010/BenchmarkDatasets/"
+DATA_SOURCE = "/data1/sascha/data/"
+DATASET_LOBSTER = "lobster_all/2021 sample/"
+DATASET_FI = "fi_2010_all/BenchmarkDatasets/"
 DATA_PICKLES = "data/pickles/"
 
 

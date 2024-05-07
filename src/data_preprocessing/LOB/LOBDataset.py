@@ -53,7 +53,7 @@ class LOBDataset(data.Dataset):
             stocks_open = config.CHOSEN_STOCKS[cst.STK_OPEN.TEST].value   # = [NVDA]
 
         for stock in stocks_open:
-            path = cst.DATASET_LOBSTER + f'_data_dwn_48_332__{stock}_{config.CHOSEN_PERIOD.value["first_day"]}_{config.CHOSEN_PERIOD.value["last_day"]}_10'
+            path = cst.DATASET_LOBSTER + f'_data_dwn_32_210__{stock}_{config.CHOSEN_PERIOD.value["first_day"]}_{config.CHOSEN_PERIOD.value["last_day"]}_10'
 
             # normalization_mean = self.vol_price_mu[stock] if stock in self.vol_price_mu else None
             # normalization_std = self.vol_price_sig[stock] if stock in self.vol_price_sig else None
@@ -132,7 +132,13 @@ class LOBDataset(data.Dataset):
         self.x = pd.concat(Xs, axis=0)
         self.x, self.vol_price_mu, self.vol_price_sig = self.__stationary_normalize_data(self.x, self.vol_price_mu, self.vol_price_sig)
 
-        self.x = torch.from_numpy(self.x.values).type(torch.FloatTensor)
+
+        if config.CHOSEN_MODEL in [cst.Models.S5BOOK,
+                                       cst.Models.S5MSGS,
+                                       cst.Models.S5MSGSBOOK]:
+            self.x=np.array(self.x.values)
+        else:
+            self.x = torch.from_numpy(self.x.values).type(torch.FloatTensor)
 
         y = np.concatenate(Ys, axis=0).astype(float)
 
@@ -147,7 +153,12 @@ class LOBDataset(data.Dataset):
             occs = np.array([self.ys_occurrences[c] for c in sorted(self.ys_occurrences)])
             self.loss_weights = torch.Tensor(LOSS_WEIGHTS_DICT[config.CHOSEN_MODEL] / occs)
 
-        self.y = torch.from_numpy(y).type(torch.LongTensor)
+        if config.CHOSEN_MODEL in [cst.Models.S5BOOK,
+                                       cst.Models.S5MSGS,
+                                       cst.Models.S5MSGSBOOK]:
+            self.y=np.array(y)
+        else:
+            self.y = torch.from_numpy(y).type(torch.LongTensor)
         self.stock_sym_name = Ss
 
         # self.indexes_chosen = self.__under_sampling(self.y, ignore_indices)
@@ -160,6 +171,7 @@ class LOBDataset(data.Dataset):
 
     def __getitem__(self, index):
         """ Generates samples of data. """
+        
         x = self.x[index: index + self.sample_size]
         y = self.y[index + self.sample_size - 1]
         s = self.stock_sym_name[index]

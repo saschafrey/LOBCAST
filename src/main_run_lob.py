@@ -1,6 +1,10 @@
 import os
 import sys
 
+sys.path.append("/data1/sascha/")
+sys.path.append("/data1/sascha/LOBS5Prediction")
+
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 import src.utils.utils_training_loop as tlu
 from src.config import Configuration
 import src.constants as cst
@@ -70,7 +74,12 @@ if __name__ == '__main__':
 
     EXE_PLAN = {
         cst.Servers.ANY: [
-            (cst.Models.MLP, {'forward_windows': [cst.WinSize.EVENTS5], 'seed': [500]})
+            (cst.Models.S5BOOK, {'forward_windows': [cst.WinSize.EVENTS1,
+                                                     cst.WinSize.EVENTS2,
+                                                     cst.WinSize.EVENTS3,
+                                                     cst.WinSize.EVENTS5,
+                                                     cst.WinSize.EVENTS10],
+                                'seed': [500]})
         ]
     }
 

@@ -6,12 +6,21 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 
+from functools import partial
+
 import numpy as np
 import src.constants as cst
 import wandb
 from src.config import Configuration
 from src.utils.utils_generic import get_index_from_window
 from src.metrics.metrics_learning import compute_sk_cm, compute_metrics
+
+import jax
+from flax.training import train_state
+from typing import Tuple,Dict
+from flax import linen as lnn
+
+from LOBS5Prediction.lob.train_helpers import prep_batch,train_step,eval_step
 
 
 class NNEngine(pl.LightningModule):
@@ -54,6 +63,7 @@ class NNEngine(pl.LightningModule):
         self.weight_decay = weight_decay
         self.eps = eps
         self.momentum = momentum
+
 
         self.testing_mode = cst.ModelSteps.TESTING
 
@@ -124,6 +134,7 @@ class NNEngine(pl.LightningModule):
         model_step = cst.ModelSteps.VALIDATION_EPOCH
 
         # COMPUTE CM (1) (SRC) - (SRC)
+        #print("*****",self.remote_log.id)
         self.__log_wandb_cm(truths, preds, model_step, self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name)  # cm to log
         val_dict = compute_metrics(truths, preds, model_step, loss_vals, self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name)  # dict to log
 
@@ -151,7 +162,7 @@ class NNEngine(pl.LightningModule):
 
         cm = compute_sk_cm(truths, preds)
         self.config.METRICS_JSON.update_cfm(self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name, cm)
-
+        
         # PER STOCK PREDICTIONS
         if self.config.CHOSEN_STOCKS[cst.STK_OPEN.TEST] == cst.Stocks.ALL and self.config.CHOSEN_MODEL not in [cst.Models.METALOB, cst.Models.MAJORITY]:
             # computing metrics per stock
@@ -222,7 +233,8 @@ class NNEngine(pl.LightningModule):
         return preds, truths, losses, stock_names, logits
 
     def __log_wandb_cm(self, ys, predictions, model_step, si):
-        if self.remote_log is not None:  # log to wandb
+        #print("###########",self.remote_log.id)
+        if self.remote_log.id is not None:  # log to wandb -- remove ".id" if not using WANDB
             name = model_step.value + f"_conf_mat_{si}"
             self.remote_log.log({name: wandb.plot.confusion_matrix(
                 probs=None,
@@ -232,6 +244,7 @@ class NNEngine(pl.LightningModule):
             )
 
     def configure_optimizers(self):
+
 
         if self.optimizer_name == cst.Optimizers.ADAM.value:
 
@@ -312,3 +325,420 @@ class NNEngine(pl.LightningModule):
         # SETTING the new LR
         for g in self.optimizer_obj.param_groups:
             g['lr'] = self.lr
+
+class JAX_NNEngine(pl.LightningModule):
+    
+    def __init__(
+        self,
+        config: Configuration,
+        model_type=None, #Chosen Model String
+        state: train_state.TrainState = None,
+        neural_architecture=None, #Model Class (torch or flax or anything, ideally agnostic)
+        optimizer=None, #Should remain none because need to maange manually
+        lr=None,
+        eps=None,
+        weight_decay=0,
+        momentum=None,
+        loss_weights=None, #vector of weights for considering losses.
+        remote_log=None, #WANDB object
+        n_samples=None,
+        n_epochs=None,
+        n_batch_size=None,
+        batchnorm=False,
+        n_classes=cst.NUM_CLASSES, #Use the cst as the default.
+        in_dim=0,
+    ):
+        super().__init__()
+
+
+        self.config = config
+
+        self.n_samples = n_samples
+        self.in_dim=in_dim
+        self.n_epochs = n_epochs
+        self.n_batch_size = n_batch_size
+
+        self.remote_log = remote_log
+
+
+        self.model_type = model_type
+        self.neural_architecture = neural_architecture
+        self.val_model=neural_architecture(training=False, step_rescale=1)
+        
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.eps = eps
+        self.momentum = momentum
+        self.batchnorm = batchnorm
+        self.n_classes=n_classes
+        self.state=state
+        print("initialising model with params: ", self.state.params['book_encoder']['layers_0']['norm']['bias'])
+
+        self.testing_mode = cst.ModelSteps.TESTING
+
+        self.automatic_optimization = False
+
+        # LR decay here below
+        self.optimizer_obj = None
+        self.no_improvement_count = 0
+        self.best_epoch_train_loss = 0
+        self.cur_decay_index = 0
+        self.LR_DECAY_CTABL = [0.005, 0.001, 0.0005, 0.0001, 0.00008, 0.00001]
+
+        self.global_step_=0
+
+        self.rng_main=jax.random.PRNGKey(config.SEED)
+
+    
+    def get_extra_state(self):
+        print("Saving jax parameters in get_extra_state method in util_training.")
+        jax_state=self.state.params
+        return jax_state
+    
+    def set_extra_state(self,state):
+        print("Updateing model with saved params: ", state['book_encoder']['layers_0']['norm']['bias'])
+        self.state=self.state.replace(params=state)
+
+
+
+    def forward(self, x):
+        params=self.state.params
+        self.rng_main, rng = jax.random.split(self.rng_main)
+        if self.batchnorm:
+            logits, mod_vars = self.state.apply_fn( 
+                {"params": params, "batch_stats": self.state.batch_stats},
+                *x,
+                rngs={"dropout": rng},
+                mutable=["intermediates", "batch_stats"],
+            )
+        else:
+            logits, mod_vars = self.state.apply_fn(
+                {"params": params},
+                *x,
+                rngs={"dropout": rng},
+                mutable=["intermediates"],
+            )
+
+        return logits
+
+    @property
+    def global_step(self):
+        '''
+        self.global_step is an attribute without setter and is updated somewhere deep within Lightning
+        Simply overwrite global_step as a property to access it normally in the LightningModule
+        :return:
+        '''
+        return self.global_step_
+
+    def training_step(self, batch, batch_idx):
+        
+        self.optimizers().step()
+
+
+        self.global_step_ += 1
+        if not isinstance(batch[2],Dict):
+            batch[2]={}
+
+        batch[0]=batch[0].numpy()
+        batch[1]=batch[1].numpy()
+        inputs, labels, integration_times =prep_batch(batch=batch,
+                                                       seq_len=self.n_samples,
+                                                       in_dim=self.in_dim,
+                                                       num_devices=cst.NUM_GPUS)
+        rng_main, drop_rng = jax.random.split(self.rng_main)
+
+        self.state, loss = train_step(
+            self.state,
+            drop_rng, 
+            inputs,
+            labels,
+            integration_times,
+            self.batchnorm, 
+        )
+
+        #Copy out optm objects. See configure_optimizers method. 
+        self.optm_func=self.state.tx
+        self.optm_state=self.state.opt_state
+
+        # losses are already averaged across devices (--> should be all the same here)
+        #batch_losses.append(loss[0])
+        #lr_params = (decay_function, ssm_lr, lr, step, end_step, opt_config, lr_min)
+        #state, step = update_learning_rate_per_step(lr_params, state,num_devices)
+        
+        ret_dict = {'loss_val': np.mean(loss), 'global_step': self.global_step, 'current_epoch': self.current_epoch}
+        return ret_dict 
+    
+    def training_step_debug(self, batch, batch_idx):
+        
+        self.global_step_ += 1
+        if not isinstance(batch[2],Dict):
+            batch[2]={}
+
+        
+        batch[0]=batch[0].numpy()
+        batch[1]=batch[1].numpy()
+        #print(batch)
+        
+        inputs, labels, integration_times =prep_batch(batch=batch,
+                                                    seq_len=self.n_samples,
+                                                    in_dim=self.in_dim,
+                                                    num_devices=cst.NUM_GPUS)
+        
+        rng_main, drop_rng = jax.random.split(self.rng_main)
+        self.state, loss = train_step(
+            self.state,
+            drop_rng, 
+            inputs,
+            labels,
+            integration_times,
+            self.batchnorm, 
+        )
+
+        #Copy out optm objects. See configure_optimizers method. 
+        self.optm_func=self.state.tx
+        self.optm_state=self.state.opt_state
+
+        # losses are already averaged across devices (--> should be all the same here)
+        #batch_losses.append(loss[0])
+        #lr_params = (decay_function, ssm_lr, lr, step, end_step, opt_config, lr_min)
+        #state, step = update_learning_rate_per_step(lr_params, state,num_devices)
+        ret_dict = {'loss_val': np.mean(loss), 'global_step': self.global_step, 'current_epoch': self.current_epoch}
+        return ret_dict 
+
+
+
+
+    def validation_step(self, batch, batch_idx):
+        prediction_ind, y, loss_val, acc, logits, stocknames = self.__validation_and_testing(batch)
+        return prediction_ind, y, loss_val, acc, logits, stocknames
+
+    def test_step(self, batch, batch_idx):
+        print("testing model with params: ", self.state.params['book_encoder']['layers_0']['norm']['bias'])
+        prediction_ind, y, loss_val, acc, logits, stocknames = self.__validation_and_testing(batch)
+        return prediction_ind, y, loss_val, acc, logits, stocknames
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        raise NotImplementedError(" Inference not yet implemented for jax")
+        if len(batch) == 3:
+            x, _, _ = batch
+        else:
+            x, _ = batch
+
+        t0 = time.time()
+        p = self(x)
+        torch.cuda.current_stream().synchronize()
+        t1 = time.time()
+        elapsed = t1 - t0
+        # print("Inference for the model:", elapsed, "ms")
+        return elapsed
+
+    def training_epoch_end(self, validation_step_outputs):
+        losses = [el["loss_val"].item() for el in validation_step_outputs]
+        sum_losses = float(np.sum(losses))
+
+        #self.update_lr(sum_losses)
+
+        var_name = cst.ModelSteps.TRAINING.value + cst.Metrics.LOSS.value
+        self.log(var_name, sum_losses, prog_bar=True)
+
+        if self.remote_log is not None:
+            self.remote_log.log({var_name: sum_losses})
+
+        # self.cf.METRICS_JSON.add_testing_metrics(self.cf.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name, {'MAX-EPOCHS': self.current_epoch})
+        # self.remote_log({"current_epoch": self.current_epoch})
+
+    def validation_epoch_end(self, validation_step_outputs):
+        preds, truths, loss_vals, acc, logits, stock_names = self.get_prediction_vectors(validation_step_outputs)
+
+        model_step = cst.ModelSteps.VALIDATION_EPOCH
+
+        # COMPUTE CM (1) (SRC) - (SRC)
+        #print("*****",self.remote_log.id)
+        self.__log_wandb_cm(truths, preds, model_step, self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name)  # cm to log
+        val_dict = compute_metrics(truths, preds, model_step, loss_vals, self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name)  # dict to log
+
+        # for saving best model
+        validation_string = "{}_{}_{}".format(model_step.value, self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name, cst.Metrics.F1.value)
+        self.log(validation_string, val_dict[validation_string], prog_bar=True)  # validation_!SRC!_F1
+
+        if self.remote_log is not None:  # log to wandb
+            self.remote_log.log(val_dict)
+
+    def test_epoch_end(self, test_step_outputs):
+        preds, truths, loss_vals, acc, logits, stock_names = self.get_prediction_vectors(test_step_outputs)
+
+        model_step = self.testing_mode
+
+        # LOGGING
+        # COMPUTE CM (1) (SRC) - (SRC)
+        self.__log_wandb_cm(truths, preds, model_step, self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name)  # cm to log
+
+        val_dict = compute_metrics(truths, preds, model_step, loss_vals, self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name)  # dict to log
+        self.config.METRICS_JSON.update_metrics(self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name, val_dict)
+
+        logits_dict = {'LOGITS': str(logits.tolist())}
+        self.config.METRICS_JSON.update_metrics(self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name, logits_dict)
+
+        cm = compute_sk_cm(truths, preds)
+        self.config.METRICS_JSON.update_cfm(self.config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name, cm)
+
+        # PER STOCK PREDICTIONS
+        if self.config.CHOSEN_STOCKS[cst.STK_OPEN.TEST] == cst.Stocks.ALL and self.config.CHOSEN_MODEL not in [cst.Models.METALOB, cst.Models.MAJORITY]:
+            # computing metrics per stock
+            print(truths)
+            for si in self.config.CHOSEN_STOCKS[cst.STK_OPEN.TEST].value:
+                #Note: Stock names need to be an np.array not a list for this to work. 
+                index_si = np.where(stock_names == si)[0]
+                print("Indices",index_si)
+                truths_si = truths[index_si]
+                preds_si = preds[index_si]
+                logits_si = logits[index_si]
+
+                dic_si = compute_metrics(truths_si, preds_si, model_step, loss_vals, si)
+                self.config.METRICS_JSON.update_metrics(si, dic_si)
+                val_dict.update(dic_si)
+
+                logits_dict = {'LOGITS': str(logits_si.tolist())}
+                self.config.METRICS_JSON.update_metrics(si, logits_dict)
+                self.__log_wandb_cm(truths_si, preds_si, model_step, si)
+
+                cm = compute_sk_cm(truths_si, preds_si)
+                self.config.METRICS_JSON.update_cfm(si, cm)
+
+        if self.remote_log is not None:  # log to wandb
+            val_dict["current_epoch"] = self.current_epoch
+            self.remote_log.log(val_dict)
+
+    # COMMON
+    def __validation_and_testing(self, batch):
+        if not isinstance(batch[2],Dict):
+            stock_names=batch[2]
+            batch[2]={}
+
+        batch[0]=batch[0].numpy()
+        batch[1]=batch[1].numpy()
+        y=batch[1]
+        inputs, labels, integration_times =prep_batch(batch=batch,
+                                                       seq_len=self.n_samples,
+                                                       in_dim=self.in_dim,
+                                                       num_devices=cst.NUM_GPUS)
+        
+        """
+        stock_names = [None]*self.n_batch_size
+        if len(batch) == 3:
+            x, y, stock_names = batch
+        else:
+            x, y = batch
+        """
+        loss, acc, pred = eval_step(
+            inputs, labels, integration_times, self.state, self.val_model.apply, self.batchnorm)
+
+        # deriving prediction from softmax probs
+        prediction_ind = np.argmax(pred, axis=2)  # B
+        prediction_ind=prediction_ind.flatten()
+        loss=np.mean(loss)
+        acc=acc.flatten()
+        pred=pred.flatten()
+
+        return prediction_ind, y, loss, acc, pred,stock_names
+
+    def get_prediction_vectors(self, model_output):
+        """ Accumulates the models output after each validation and testing epoch end. """
+
+        preds, truths, losses, acc, logits,stock_names = [], [], [], [], [],[]
+        for preds_b, y_b, loss_val, acc_b, logits_b, stock_names_b in model_output:
+            preds += preds_b.tolist()
+            truths += y_b.tolist()
+            logits += logits_b.tolist()
+            acc += acc_b.tolist()
+            stock_names += stock_names_b
+            # loss is single per batch - because avged above.
+            losses += [loss_val.item()]
+
+        preds = np.array(preds)
+        truths = np.array(truths)
+        logits = np.array(logits)
+        acc = np.array(acc)
+        losses = np.array(losses)
+        stock_names=np.array(stock_names)
+
+
+        if self.config.CHOSEN_MODEL == cst.Models.DEEPLOBATT:
+            index = cst.HORIZONS_MAPPINGS_FI[self.config.HYPER_PARAMETERS[cst.LearningHyperParameter.FORWARD_WINDOW]]
+            truths = truths[:, index]
+            preds = preds[:, index]
+
+        return preds, truths, losses, acc, logits, stock_names
+
+    def __log_wandb_cm(self, ys, predictions, model_step, si):
+        #print("###########",self.remote_log.id)
+        if self.remote_log.id is not None:  # log to wandb -- remove ".id" if not using WANDB
+            name = model_step.value + f"_conf_mat_{si}"
+            self.remote_log.log({name: wandb.plot.confusion_matrix(
+                probs=None,
+                y_true=ys, preds=predictions,
+                class_names=[cl.name for cl in cst.Predictions],
+                title=name)},
+            )
+
+    def configure_optimizers(self):
+        #Optimiser objects are stored in the state.
+        #These self. objects should never get used in reality
+        #Act more as placeholders for where the objects are stored. 
+        self.optm_func=self.state.tx
+        self.optm_state=self.state.opt_state
+        
+        
+
+    '''
+    def update_lr(self, sum_loss):
+        """ To run on train epoch end, to update the lr of needing models. """
+
+        if self.config.CHOSEN_MODEL == cst.Models.ATNBoF:
+            DROP_EPOCHS = [11, 51]
+            if self.current_epoch in DROP_EPOCHS:
+                self.lr /= 0.1
+                self.__update_all_lr()
+
+        elif self.config.CHOSEN_MODEL == cst.Models.CTABL:
+
+            if sum_loss > self.best_epoch_train_loss and self.current_epoch > 0:
+                self.no_improvement_count += 1
+            else:
+                self.best_epoch_train_loss = sum_loss
+                self.no_improvement_count = 0
+
+            if self.no_improvement_count > 3 and self.cur_decay_index < len(self.LR_DECAY_CTABL):
+                self.no_improvement_count = 0
+                self.lr = self.LR_DECAY_CTABL[self.cur_decay_index]
+                self.cur_decay_index += 1
+
+                self.__update_all_lr()
+
+        elif self.config.CHOSEN_MODEL == cst.Models.BINCTABL:
+            DROP_EPOCHS = [11, 71]
+            if self.current_epoch == DROP_EPOCHS[0]:
+                self.lr = 1e-4
+                self.__update_all_lr()
+
+            elif self.current_epoch == DROP_EPOCHS[1]:
+                self.lr = 1e-5
+                self.__update_all_lr()
+    
+
+    def __update_all_lr(self):
+        # SETTING the new LR
+        for g in self.optimizer_obj.param_groups:
+            g['lr'] = self.lr
+    '''
+
+
+class DummyOptimizer(torch.optim.Optimizer):
+    def __init__(self,params):
+        print("Parameters:", params)
+        #super().__init__([{"dummy",torch.tensor(0)}],{})
+
+    def step(self):
+        print("Stepping Dummy optimiser")
+        return 0
+

@@ -2,7 +2,8 @@ import numpy as np
 
 import src.constants as cst
 from src.config import Configuration
-from src.utils.util_training import NNEngine
+from src.data_preprocessing.DataModule import DataModule
+from src.utils.util_training import NNEngine, JAX_NNEngine
 
 
 # MODELS
@@ -22,11 +23,15 @@ from src.models.atnbof.atnbof import ATNBoF
 from src.models.tlonbof.tlonbof import TLONBoF
 from src.models.axial.axiallob import AxialLOB
 from src.models.metalob.metalob import MetaLOB
+from src.models.jaxtest.jaxtest import TestNetwork
+
+from src.models.s5.s5_extension_utils.init_train_new import init_train_state
 
 
-def pick_model(config: Configuration, data_module):
+def pick_model(config: Configuration, data_module: DataModule):
     net_architecture = None
     loss_weights = None
+    state=None
 
     if config.CHOSEN_MODEL == cst.Models.MLP:
         net_architecture = MLP(
@@ -146,20 +151,58 @@ def pick_model(config: Configuration, data_module):
         )
         # net_architecture = MetaLOB2()
 
-    engine = NNEngine(
-        config=config,
-        model_type=config.CHOSEN_MODEL,
-        neural_architecture=net_architecture,
-        optimizer=config.HYPER_PARAMETERS[cst.LearningHyperParameter.OPTIMIZER],
-        lr=config.HYPER_PARAMETERS[cst.LearningHyperParameter.LEARNING_RATE],
-        weight_decay=config.HYPER_PARAMETERS[cst.LearningHyperParameter.WEIGHT_DECAY],
-        eps=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPS],
-        momentum=config.HYPER_PARAMETERS[cst.LearningHyperParameter.MOMENTUM],
-        loss_weights=loss_weights,
-        remote_log=config.WANDB_INSTANCE,
-        n_samples=len(data_module.train_set.x),
-        n_epochs=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPOCHS_UB],
-        n_batch_size=config.HYPER_PARAMETERS[cst.LearningHyperParameter.BATCH_SIZE],
-    ).to(cst.DEVICE_TYPE)
+    elif config.CHOSEN_MODEL == cst.Models.S5BOOK:
+        #Fix issue with args 
+        state, net_architecture=init_train_state(config=config,
+                                                 in_dim=data_module.x_shape[1],
+                                                 n_classes=data_module.num_classes,
+                                                 seq_len=data_module.x_shape[0],
+                                                 book_dim=0,
+                                                 book_seq_len=0,
+                                                 print_shapes=config.IS_DEBUG)
+    elif config.CHOSEN_MODEL == cst.Models.S5MSGS:
+        raise NotImplementedError("S5 with only messages as data not implemented")
+    elif config.CHOSEN_MODEL == cst.Models.S5MSGSBOOK:
+        raise NotImplementedError("S5 with messages and book as data not implemented")
+
+
+    if config.CHOSEN_MODEL in [cst.Models.S5MSGS,cst.Models.S5BOOK,cst.Models.S5MSGSBOOK]:
+        engine= JAX_NNEngine(
+            config=config,
+            model_type=config.CHOSEN_MODEL,
+            state=state,
+            neural_architecture=net_architecture,
+            optimizer=None,
+            lr=config.HYPER_PARAMETERS[cst.LearningHyperParameter.LEARNING_RATE],
+            weight_decay=config.HYPER_PARAMETERS[cst.LearningHyperParameter.WEIGHT_DECAY],
+            eps=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPS],
+            momentum=config.HYPER_PARAMETERS[cst.LearningHyperParameter.MOMENTUM],
+            loss_weights=loss_weights,
+            remote_log=config.WANDB_INSTANCE,
+            n_samples=data_module.x_shape[0],
+            n_epochs=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPOCHS_UB],
+            n_batch_size=config.HYPER_PARAMETERS[cst.LearningHyperParameter.BATCH_SIZE],
+            batchnorm=config.HYPER_PARAMETERS[cst.LearningHyperParameter.BATCHNORM],
+            n_classes=data_module.num_classes,
+            in_dim=data_module.x_shape[1],
+        )
+    else:
+        engine = NNEngine(
+            config=config,
+            model_type=config.CHOSEN_MODEL,
+            neural_architecture=net_architecture,
+            optimizer=config.HYPER_PARAMETERS[cst.LearningHyperParameter.OPTIMIZER],
+            lr=config.HYPER_PARAMETERS[cst.LearningHyperParameter.LEARNING_RATE],
+            weight_decay=config.HYPER_PARAMETERS[cst.LearningHyperParameter.WEIGHT_DECAY],
+            eps=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPS],
+            momentum=config.HYPER_PARAMETERS[cst.LearningHyperParameter.MOMENTUM],
+            loss_weights=loss_weights,
+            remote_log=config.WANDB_INSTANCE,
+            n_samples=len(data_module.train_set.x),
+            n_epochs=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPOCHS_UB],
+            n_batch_size=config.HYPER_PARAMETERS[cst.LearningHyperParameter.BATCH_SIZE],
+        ).to(cst.DEVICE_TYPE)
+
+
 
     return engine

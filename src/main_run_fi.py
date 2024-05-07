@@ -1,7 +1,8 @@
-
-import src.utils.utils_training_loop as tlu
 import src.constants as cst
+import src.utils.utils_training_loop as tlu
+
 import sys
+import os
 
 from src.config import Configuration
 
@@ -63,7 +64,6 @@ if __name__ == '__main__':
     EXE_PLAN = {
         cst.Servers.ANY: [
             (cst.Models.MLP,      {'k': [cst.FI_Horizons.K5], 'seed': [500]}),
-            (cst.Models.BINCTABL, {'k': [cst.FI_Horizons.K5], 'seed': 'all'})
         ]
     }
 

@@ -208,7 +208,7 @@ def prepare_data_meta(config: Configuration):
     return meta_dm
 
 
-def pick_dataset(config: Configuration):
+def pick_dataset(config: Configuration) -> DataModule:
 
     if config.CHOSEN_DATASET == cst.DatasetFamily.LOB:
         return prepare_data_lob(config)

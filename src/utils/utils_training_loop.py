@@ -8,6 +8,8 @@ import wandb
 import traceback
 import socket
 
+import tqdm
+
 
 # TORCH
 from pytorch_lightning import Trainer
@@ -35,9 +37,10 @@ from src.models.axial.axiallob_param_search import HP_AXIALLOB, HP_AXIALLOB_FI_F
 from src.models.atnbof.atnbof_param_search import HP_ATNBoF, HP_ATNBoF_FI_FIXED, HP_ATNBoF_LOBSTER_FIXED
 from src.models.tlonbof.tlonbof_param_search import HP_TLONBoF, HP_TLONBoF_FI_FIXED, HP_TLONBoF_LOBSTER_FIXED
 from src.models.metalob.metalob_param_search import HP_META, HP_META_FIXED
+from src.models.s5.s5book_param_search import HP_S5, HP_S5_FI_FIXED, HP_S5_LOBSTER_FIXED
 
 from src.utils.utils_dataset import pick_dataset
-from src.utils.utils_models import pick_model
+from src.utils.utils_models import pick_model,JAX_NNEngine,NNEngine
 from collections import namedtuple
 
 HPSearchTypes  = namedtuple('HPSearchTypes', ("sweep", "fixed_fi", "fixed_lob"))
@@ -65,9 +68,11 @@ HP_DICT_MODEL = {
     cst.Models.AXIALLOB: HPSearchTypes(HP_AXIALLOB, HP_AXIALLOB_FI_FIXED, HP_AXIALLOB_LOBSTER_FIXED),
     cst.Models.ATNBoF: HPSearchTypes(HP_ATNBoF, HP_ATNBoF_FI_FIXED, HP_ATNBoF_LOBSTER_FIXED),
     cst.Models.TLONBoF: HPSearchTypes(HP_TLONBoF, HP_TLONBoF_FI_FIXED, HP_TLONBoF_LOBSTER_FIXED),
-
     cst.Models.METALOB: HPSearchTypes2(HP_META, HP_META_FIXED),
-    cst.Models.MAJORITY: HPSearchTypes2(HP_META, HP_META_FIXED)
+    cst.Models.MAJORITY: HPSearchTypes2(HP_META, HP_META_FIXED),
+    cst.Models.S5BOOK : HPSearchTypes(HP_S5,HP_S5_FI_FIXED, HP_S5_LOBSTER_FIXED),
+    cst.Models.S5MSGS : HPSearchTypes(HP_S5,HP_S5_FI_FIXED, HP_S5_LOBSTER_FIXED),
+    cst.Models.S5MSGSBOOK : HPSearchTypes(HP_S5,HP_S5_FI_FIXED, HP_S5_LOBSTER_FIXED)
 }
 
 
@@ -102,20 +107,40 @@ def __run_training_loop(config: Configuration, model_params=None):
 
         data_module = pick_dataset(config)    # load the data
         nn = pick_model(config, data_module)  # load the model
+        
+        print(nn._parameters)
 
+        pl_multiproc_devices=cst.NUM_GPUS
+        accel=cst.DEVICE_TYPE
+        if isinstance(nn,JAX_NNEngine):
+            #Turn off the multiprocessing features of the trainer
+            #Do it manually with jax.pmap transform on train function in nn
+            pl_multiproc_devices=None
+            accel='cpu'
+            print("Running in JAX Mode")
+
+        print("Early stopping metric ", config.EARLY_STOPPING_METRIC)
         trainer = Trainer(
-            accelerator=cst.DEVICE_TYPE,
-            devices=cst.NUM_GPUS,
+            accelerator=accel,
+            devices=pl_multiproc_devices,
             check_val_every_n_epoch=config.VALIDATE_EVERY,
-            max_epochs=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPOCHS_UB],
+            max_epochs=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPOCHS_UB], #TODO: Revert back to hp
             callbacks=[
-                cbk.callback_save_model(config, config.WANDB_RUN_NAME),
+                cbk.callback_save_model(config, config.WANDB_RUN_NAME), 
                 cbk.early_stopping(config)
             ],
+            #fast_dev_run=True,
+            #limit_train_batches=100,
+            #limit_val_batches=50,
         )
+
+        #for batch_idx, batch in enumerate(tqdm.tqdm(data_module.train_dataloader())):
+        #    nn.training_step_debug(batch=batch, batch_idx=batch_idx)
+            #break
 
         # TRAINING STEP
         trainer.fit(nn, data_module)
+
 
         # FINAL VALIDATION STEP
         nn.testing_mode = cst.ModelSteps.VALIDATION_MODEL
@@ -149,7 +174,6 @@ def run(config: Configuration):
 
         with wandb.init(project=cst.PROJECT_NAME, name=run_name) as wandb_instance:
             # log simulation details in WANDB console
-
             wandb_instance.log_code("src/")
             wandb_instance.log({"model": config.CHOSEN_MODEL.name})
             wandb_instance.log({"seed": config.SEED})
@@ -190,6 +214,7 @@ def run(config: Configuration):
             },
             project=cst.PROJECT_NAME
         )
+        print("Setting up sweep agent ")
         wandb.agent(sweep_id, function=lambda: _wandb_exe(config), count=cst.WANDB_SWEEP_MAX_RUNS)
     else:
         # NO SWEEP

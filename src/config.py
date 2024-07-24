@@ -25,6 +25,9 @@ class Configuration:
         self.RANDOM_GEN_DATASET = None
         self.VALIDATE_EVERY = 1
 
+        self.ORBAX_CKPT_FOLDER= ""
+        self.RESTORE_STEP=None
+
         self.IS_DATA_PRELOAD = True
         self.INSTANCES_LOWER_BOUND = 1000  # under-sampling must have at least INSTANCES_LOWER_BOUND instances
 

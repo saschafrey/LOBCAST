@@ -74,6 +74,9 @@ class NNEngine(pl.LightningModule):
         self.cur_decay_index = 0
         self.LR_DECAY_CTABL = [0.005, 0.001, 0.0005, 0.0001, 0.00008, 0.00001]
 
+        print("Book encoder layer 0  weights: ", self.state.params['book_encoder']['layers_0']['norm']['bias'])
+
+
     def forward(self, x):
         out = self.neural_architecture(x)
         logits = self.softmax(out)
@@ -371,7 +374,7 @@ class JAX_NNEngine(pl.LightningModule):
         self.momentum = momentum
         self.batchnorm = batchnorm
         self.n_classes=n_classes
-        self.state=state
+        self.state: train_state.TrainState =state 
         print("initialising model with params: ", self.state.params['book_encoder']['layers_0']['norm']['bias'])
 
         self.testing_mode = cst.ModelSteps.TESTING
@@ -390,14 +393,14 @@ class JAX_NNEngine(pl.LightningModule):
         self.rng_main=jax.random.PRNGKey(config.SEED)
 
     
-    def get_extra_state(self):
-        print("Saving jax parameters in get_extra_state method in util_training.")
-        jax_state=self.state.params
-        return jax_state
+    # def get_extra_state(self):
+    #     print("Saving jax parameters in get_extra_state method in util_training.")
+    #     jax_state=self.state.params
+    #     return jax_state
     
-    def set_extra_state(self,state):
-        print("Updateing model with saved params: ", state['book_encoder']['layers_0']['norm']['bias'])
-        self.state=self.state.replace(params=state)
+    # def set_extra_state(self,state):
+    #     print("Updating model with saved params: ", state['book_encoder']['layers_0']['norm']['bias'])
+    #     self.state=self.state.replace(params=state)
 
 
 
@@ -506,14 +509,14 @@ class JAX_NNEngine(pl.LightningModule):
         return ret_dict 
 
 
-
+    # def on_save_checkpoint(self, checkpoint):
+    #     print(checkpoint)
 
     def validation_step(self, batch, batch_idx):
         prediction_ind, y, loss_val, acc, logits, stocknames = self.__validation_and_testing(batch)
         return prediction_ind, y, loss_val, acc, logits, stocknames
 
     def test_step(self, batch, batch_idx):
-        print("testing model with params: ", self.state.params['book_encoder']['layers_0']['norm']['bias'])
         prediction_ind, y, loss_val, acc, logits, stocknames = self.__validation_and_testing(batch)
         return prediction_ind, y, loss_val, acc, logits, stocknames
 
@@ -585,11 +588,9 @@ class JAX_NNEngine(pl.LightningModule):
         # PER STOCK PREDICTIONS
         if self.config.CHOSEN_STOCKS[cst.STK_OPEN.TEST] == cst.Stocks.ALL and self.config.CHOSEN_MODEL not in [cst.Models.METALOB, cst.Models.MAJORITY]:
             # computing metrics per stock
-            print(truths)
             for si in self.config.CHOSEN_STOCKS[cst.STK_OPEN.TEST].value:
                 #Note: Stock names need to be an np.array not a list for this to work. 
                 index_si = np.where(stock_names == si)[0]
-                print("Indices",index_si)
                 truths_si = truths[index_si]
                 preds_si = preds[index_si]
                 logits_si = logits[index_si]
@@ -618,6 +619,7 @@ class JAX_NNEngine(pl.LightningModule):
         batch[0]=batch[0].numpy()
         batch[1]=batch[1].numpy()
         y=batch[1]
+
         inputs, labels, integration_times =prep_batch(batch=batch,
                                                        seq_len=self.n_samples,
                                                        in_dim=self.in_dim,
@@ -630,6 +632,7 @@ class JAX_NNEngine(pl.LightningModule):
         else:
             x, y = batch
         """
+
         loss, acc, pred = eval_step(
             inputs, labels, integration_times, self.state, self.val_model.apply, self.batchnorm)
 
@@ -735,10 +738,10 @@ class JAX_NNEngine(pl.LightningModule):
 
 class DummyOptimizer(torch.optim.Optimizer):
     def __init__(self,params):
-        print("Parameters:", params)
+        print("DummyOptimizer Parameters:", params)
         #super().__init__([{"dummy",torch.tensor(0)}],{})
 
     def step(self):
-        print("Stepping Dummy optimiser")
+        print("Stepping DummyOptimiser")
         return 0
 

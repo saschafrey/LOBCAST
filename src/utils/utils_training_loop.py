@@ -112,12 +112,16 @@ def __run_training_loop(config: Configuration, model_params=None):
 
         pl_multiproc_devices=cst.NUM_GPUS
         accel=cst.DEVICE_TYPE
+        callback_list=[cbk.callback_save_model(config, config.WANDB_RUN_NAME), 
+                        cbk.early_stopping(config)]
         if isinstance(nn,JAX_NNEngine):
             #Turn off the multiprocessing features of the trainer
             #Do it manually with jax.pmap transform on train function in nn
             pl_multiproc_devices=None
             accel='cpu'
             print("Running in JAX Mode")
+            callback_list.append(cbk.callback_save_model_orbax(config, config.WANDB_RUN_NAME))            
+
 
         print("Early stopping metric ", config.EARLY_STOPPING_METRIC)
         trainer = Trainer(
@@ -125,10 +129,7 @@ def __run_training_loop(config: Configuration, model_params=None):
             devices=pl_multiproc_devices,
             check_val_every_n_epoch=config.VALIDATE_EVERY,
             max_epochs=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPOCHS_UB], #TODO: Revert back to hp
-            callbacks=[
-                cbk.callback_save_model(config, config.WANDB_RUN_NAME), 
-                cbk.early_stopping(config)
-            ],
+            callbacks=callback_list,
             #fast_dev_run=True,
             #limit_train_batches=100,
             #limit_val_batches=50,

@@ -65,7 +65,7 @@ def core_test(seed, model, dataset, src_data, out_data, horizon=None, win_back=N
     )
 
     # OPEN FILE
-    files = [f for f in os.listdir(src_data + dir_name) if not f.startswith('.')]
+    files = [f for f in os.listdir(src_data + dir_name) if not (f.startswith('.') or f.endswith('.ckpt_orbax'))]
     assert len(
         files) == 1, 'We expect that in the folder there is only the checkpoint with the highest F1-score:\n{}'.format(
         files)
@@ -74,7 +74,16 @@ def core_test(seed, model, dataset, src_data, out_data, horizon=None, win_back=N
     print(seed, model, horizon, dir_name)
     # return
 
-    file_name = files[0]
+    # TODO: Should really encapsulate this in some sort of function. 
+    file_name :str = files[0]
+    split=file_name.split("-epoch=")
+    orbax_folder_name=split[0]+".ckpt_orbax"
+    step=int(split[1].split('-')[0])
+    cf.ORBAX_CKPT_FOLDER=src_data + dir_name + orbax_folder_name
+    cf.RESTORE_STEP=step
+
+
+
 
     # Setting configuration parameters
     model_params = HP_DICT_MODEL[cf.CHOSEN_MODEL].sweep
@@ -101,7 +110,6 @@ def core_test(seed, model, dataset, src_data, out_data, horizon=None, win_back=N
         print("Running in JAX Mode")
     trainer = Trainer(accelerator=accel, devices=pl_multiproc_devices, limit_test_batches=max_test_batches,limit_predict_batches=max_predict_batches)
     checkpoint_file_path = src_data + dir_name + file_name
-    print("opening", checkpoint_file_path)
 
     model.testing_mode = cst.ModelSteps.VALIDATION_MODEL
     trainer.test(model, dataloaders=datamodule.val_dataloader(), ckpt_path=checkpoint_file_path)

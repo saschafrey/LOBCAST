@@ -1,3 +1,4 @@
+import flax
 import numpy as np
 
 import src.constants as cst
@@ -26,6 +27,8 @@ from src.models.metalob.metalob import MetaLOB
 from src.models.jaxtest.jaxtest import TestNetwork
 
 from src.models.s5.s5_extension_utils.init_train_new import init_train_state
+from src.models.model_callbacks import load_checkpoint_lobcast
+
 
 
 def pick_model(config: Configuration, data_module: DataModule):
@@ -160,6 +163,18 @@ def pick_model(config: Configuration, data_module: DataModule):
                                                  book_dim=0,
                                                  book_seq_len=0,
                                                  print_shapes=config.IS_DEBUG)
+
+        if config.ORBAX_CKPT_FOLDER is not None and config.ORBAX_CKPT_FOLDER != '':
+            print(f"[*] Restoring Jax weights from {config.RESTORE_STEP}th orbax checkpoint in:\n {config.ORBAX_CKPT_FOLDER}")
+            ckpt = load_checkpoint_lobcast(
+                state,
+                config.ORBAX_CKPT_FOLDER,
+                step=config.RESTORE_STEP,
+            )
+            state=flax.jax_utils.replicate(ckpt['model'])
+        import jax
+        # print(jax.tree_util.tree_map(lambda x: x.shape, state))
+
     elif config.CHOSEN_MODEL == cst.Models.S5MSGS:
         raise NotImplementedError("S5 with only messages as data not implemented")
     elif config.CHOSEN_MODEL == cst.Models.S5MSGSBOOK:

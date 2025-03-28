@@ -17,8 +17,8 @@ from src.utils.utils_models import pick_model
 from src.utils.utils_generic import make_dir
 
 
-def core_test(seed, model, dataset, src_data, out_data, horizon=None, win_back=None, win_forward=None, target_dataset_meta=cst.DatasetFamily.LOB):
-    cf: Configuration = Configuration()
+def core_test(seed, model, dataset, src_data, out_data, horizon=None, win_back=None, win_forward=None, target_dataset_meta=cst.DatasetFamily.LOB,run_name_prefix=None):
+    cf: Configuration = Configuration(run_name_prefix)
     cf.SEED = seed
 
     set_seeds(cf)
@@ -131,7 +131,7 @@ def core_test(seed, model, dataset, src_data, out_data, horizon=None, win_back=N
     cf.METRICS_JSON.close(out_data)
 
 
-def launch_lobster_test(seeds, model_todo, models_to_avoid, dataset_type, backwards, forwards, src_data, out_data, target_dataset_meta=None):
+def launch_lobster_test(seeds, model_todo, models_to_avoid, dataset_type, backwards, forwards, src_data, out_data, target_dataset_meta=None,prefix="LOBSTER-TEST"):
     for s in seeds:
         for model in model_todo:
             for i in range(len(backwards)):
@@ -139,15 +139,15 @@ def launch_lobster_test(seeds, model_todo, models_to_avoid, dataset_type, backwa
                 km, kp = backwards[i], forwards[i]
 
                 if model in set(model_todo) - set(models_to_avoid):
-                    core_test(s, model, dataset_type, src_data, out_data, win_back=km, win_forward=kp, target_dataset_meta=cst.DatasetFamily.LOB)
+                    core_test(s, model, dataset_type, src_data, out_data, win_back=km, win_forward=kp, target_dataset_meta=cst.DatasetFamily.LOB,run_name_prefix=prefix)
 
 
-def launch_FI_test(seeds, model_todo, models_to_avoid, dataset_type, kset, src_data, out_data):
+def launch_FI_test(seeds, model_todo, models_to_avoid, dataset_type, kset, src_data, out_data,prefix="FI-TEST"):
     for s in seeds:
         for k in kset:
             for model in model_todo:
                 if model in set(model_todo) - set(models_to_avoid):
-                    core_test(s, model, dataset_type, src_data, out_data, target_dataset_meta=cst.DatasetFamily.FI)
+                    core_test(s, model, dataset_type, src_data, out_data, target_dataset_meta=cst.DatasetFamily.FI,run_name_prefix=prefix)
 
 
 def lobster_testing(src_data, out_data):
@@ -181,7 +181,7 @@ def fi_testing(src_data, out_data):
     launch_FI_test(seeds, model_todo, models_to_avoid, dataset_type, kset, src_data, out_data)
 
 def setup_wandb(config: Configuration) -> Configuration:
-    wandb_instance=wandb.init(project=cst.PROJECT_NAME)
+    wandb_instance=wandb.init(project=config.PROJECT_NAME)
     wandb_instance.log_code("src/")
     wandb_instance.log({"model": config.CHOSEN_MODEL.name})
     wandb_instance.log({"seed": config.SEED})

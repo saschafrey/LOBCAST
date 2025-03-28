@@ -7,6 +7,8 @@ import src.constants as cst
 from src.metrics.metrics_log import Metrics
 from datetime import date, datetime
 
+import torch
+
 np.set_printoptions(suppress=True)
 
 
@@ -20,6 +22,15 @@ class Configuration:
         self.RUN_NAME_PREFIX = self.assign_prefix(prefix=run_name_prefix, is_debug=self.IS_DEBUG)
 
         self.setup_all_directories(self.RUN_NAME_PREFIX, self.IS_DEBUG, self.IS_TEST_ONLY)
+
+        # Copying these to the config object so that they can be duplicated in multiprocessing 
+        if not self.IS_TEST_ONLY:
+            self.PROJECT_NAME = cst.PROJECT_NAME
+            self.DIR_SAVED_MODEL = cst.DIR_SAVED_MODEL
+            self.DIR_EXPERIMENTS = cst.DIR_EXPERIMENTS
+
+
+        self.check_cuda()
 
         self.SEED = 0
         self.RANDOM_GEN_DATASET = None
@@ -90,6 +101,14 @@ class Configuration:
         self.HYPER_PARAMETERS[LearningHyperParameter.P_DROPOUT] = 0
         self.HYPER_PARAMETERS[LearningHyperParameter.NUM_RBF_NEURONS] = 16
 
+    def check_cuda(self):
+        self.DEVICE_TYPE = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.NUM_GPUS = None if self.DEVICE_TYPE == 'cpu' else torch.cuda.device_count()
+        print("In Config:",self.DEVICE_TYPE, self.NUM_GPUS)
+
+        cst.DEVICE_TYPE = self.DEVICE_TYPE
+        cst.NUM_GPUS = self.NUM_GPUS
+
     def dynamic_config_setup(self):
         # sets the name of the metric to optimize
         self.SWEEP_METRIC['name'] = "{}_{}_{}".format(cst.ModelSteps.VALIDATION_MODEL.value, self.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name, cst.Metrics.F1.value)
@@ -127,6 +146,7 @@ class Configuration:
             cst.DIR_SAVED_MODEL = cst.DIR_SAVED_MODEL.format(prefix) + "/"
             cst.DIR_EXPERIMENTS = cst.DIR_EXPERIMENTS.format(prefix) + "/"
 
+            
             # create the paths for the simulation if they do not exist already
             paths = ["data", cst.DIR_SAVED_MODEL, cst.DIR_EXPERIMENTS]
             for p in paths:

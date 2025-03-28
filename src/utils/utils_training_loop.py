@@ -1,4 +1,3 @@
-
 import sys
 
 import argparse
@@ -7,7 +6,8 @@ import numpy as np
 import wandb
 import traceback
 import socket
-
+import os
+from multiprocessing import Process,set_start_method
 import tqdm
 
 
@@ -15,7 +15,8 @@ import tqdm
 from pytorch_lightning import Trainer
 from pytorch_lightning import seed_everything
 
-
+#Not needed if not debugging
+import torch
 import src.constants as cst
 import src.models.model_callbacks as cbk
 from src.config import Configuration
@@ -110,8 +111,10 @@ def __run_training_loop(config: Configuration, model_params=None):
         
         print(nn._parameters)
 
-        pl_multiproc_devices=cst.NUM_GPUS
-        accel=cst.DEVICE_TYPE
+        pl_multiproc_devices=-1
+
+        print(f"There are {config.NUM_GPUS} devices in the config attr and {cst.NUM_GPUS} in the cst attr.")
+        accel=config.DEVICE_TYPE
         callback_list=[cbk.callback_save_model(config, config.WANDB_RUN_NAME), 
                         cbk.early_stopping(config)]
         if isinstance(nn,JAX_NNEngine):
@@ -126,21 +129,23 @@ def __run_training_loop(config: Configuration, model_params=None):
         print("Early stopping metric ", config.EARLY_STOPPING_METRIC)
         trainer = Trainer(
             accelerator=accel,
-            devices=pl_multiproc_devices,
+            devices=4,
             check_val_every_n_epoch=config.VALIDATE_EVERY,
             max_epochs=config.HYPER_PARAMETERS[cst.LearningHyperParameter.EPOCHS_UB], #TODO: Revert back to hp
             callbacks=callback_list,
+            strategy="ddp",
             #fast_dev_run=True,
-            #limit_train_batches=100,
-            #limit_val_batches=50,
+            # limit_train_batches=100,
+            # limit_val_batches=50,
         )
 
         #for batch_idx, batch in enumerate(tqdm.tqdm(data_module.train_dataloader())):
-        #    nn.training_step_debug(batch=batch, batch_idx=batch_idx)
+        #    nn.training_step_debug(bat ch=batch, batch_idx=batch_idx)
             #break
 
         # TRAINING STEP
-        trainer.fit(nn, data_module)
+        print(f"Starting training in process {os.getpid()}")
+        trainer.fit(nn, data_module,)
 
 
         # FINAL VALIDATION STEP
@@ -162,61 +167,95 @@ def __run_training_loop(config: Configuration, model_params=None):
         exit(1)
 
 
-def run(config: Configuration):
-    """ Build a WANDB sweep from a configuration object. """
 
-    def _wandb_exe(config: Configuration):
-        """ LOG on WANDB console. """
+def run_mp_agent(config: Configuration,fun:callable, device_id:int=0,sweep_id:str=None):
+        print("Restricting to device ",device_id)
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
 
-        run_name = None
+        config.check_cuda()
+        print("Device count:",config.NUM_GPUS, cst.NUM_GPUS)
+
+        # t_array=torch.asarray(12345)
+        # print(f"Using GPU {device_id}")
+        # t_mult=t_array*t_array
+        # print(t_mult,t_mult.device)
+        wandb.agent(sweep_id, project=config.PROJECT_NAME,function=lambda: fun(config), count=cst.WANDB_SWEEP_MAX_RUNS)
+
+def _wandb_exe(config: Configuration):
+    """ LOG on WANDB console. """
+
+    run_name = None
+    if not config.IS_TUNE_H_PARAMS:
+        config.dynamic_config_setup()
+        run_name = config.WANDB_SWEEP_NAME
+
+    with wandb.init(project=config.PROJECT_NAME, name=run_name) as wandb_instance:
+        # log simulation details in WANDB console
+        wandb_instance.log_code("src/")
+        wandb_instance.log({"model": config.CHOSEN_MODEL.name})
+        wandb_instance.log({"seed": config.SEED})
+        wandb_instance.log({"stock_train": config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name})
+        wandb_instance.log({"stock_test": config.CHOSEN_STOCKS[cst.STK_OPEN.TEST].name})
+        wandb_instance.log({"period": config.CHOSEN_PERIOD.name})
+        wandb_instance.log({"alpha": cst.ALPHA})
+
+        if config.CHOSEN_DATASET in [cst.DatasetFamily.FI, cst.DatasetFamily.META]:
+            wandb_instance.log({"fi-k": config.HYPER_PARAMETERS[cst.LearningHyperParameter.FI_HORIZON]})
+
+        wandb_instance.log({"back-win": config.HYPER_PARAMETERS[cst.LearningHyperParameter.BACKWARD_WINDOW]})
+        wandb_instance.log({"fwrd-win": config.HYPER_PARAMETERS[cst.LearningHyperParameter.FORWARD_WINDOW]})
+
+        config.WANDB_RUN_NAME = wandb_instance.name
+        config.WANDB_INSTANCE = wandb_instance
+
+        params_dict = wandb_instance.config  # chosen parameters from WANDB search
         if not config.IS_TUNE_H_PARAMS:
-            config.dynamic_config_setup()
-            run_name = config.WANDB_SWEEP_NAME
+            params_dict = None
 
-        with wandb.init(project=cst.PROJECT_NAME, name=run_name) as wandb_instance:
-            # log simulation details in WANDB console
-            wandb_instance.log_code("src/")
-            wandb_instance.log({"model": config.CHOSEN_MODEL.name})
-            wandb_instance.log({"seed": config.SEED})
-            wandb_instance.log({"stock_train": config.CHOSEN_STOCKS[cst.STK_OPEN.TRAIN].name})
-            wandb_instance.log({"stock_test": config.CHOSEN_STOCKS[cst.STK_OPEN.TEST].name})
-            wandb_instance.log({"period": config.CHOSEN_PERIOD.name})
-            wandb_instance.log({"alpha": cst.ALPHA})
+        __run_training_loop(config, params_dict)
 
-            if config.CHOSEN_DATASET in [cst.DatasetFamily.FI, cst.DatasetFamily.META]:
-                wandb_instance.log({"fi-k": config.HYPER_PARAMETERS[cst.LearningHyperParameter.FI_HORIZON]})
 
-            wandb_instance.log({"back-win": config.HYPER_PARAMETERS[cst.LearningHyperParameter.BACKWARD_WINDOW]})
-            wandb_instance.log({"fwrd-win": config.HYPER_PARAMETERS[cst.LearningHyperParameter.FORWARD_WINDOW]})
-
-            config.WANDB_RUN_NAME = wandb_instance.name
-            config.WANDB_INSTANCE = wandb_instance
-
-            params_dict = wandb_instance.config  # chosen parameters from WANDB search
-            if not config.IS_TUNE_H_PARAMS:
-                params_dict = None
-
-            __run_training_loop(config, params_dict)
+def run(config: Configuration,sweep_id:str = None):
+    """ Build a WANDB sweep from a configuration object. """
 
     # 🐝 STEP: initialize sweep by passing in cf
     config.dynamic_config_setup()  # initializes the simulation
 
     if config.IS_TUNE_H_PARAMS:
-        sweep_id = wandb.sweep(
-            sweep={
-                'command': ["${env}", "python3", "${program}", "${args}"],
-                'program': "src/utils_training_loop.py",
-                'name':    config.WANDB_SWEEP_NAME,
-                'method':  config.SWEEP_METHOD,
-                'metric':  config.SWEEP_METRIC,
-                'parameters': {
-                    **HP_DICT_MODEL[config.CHOSEN_MODEL].sweep
-                }
-            },
-            project=cst.PROJECT_NAME
-        )
-        print("Setting up sweep agent ")
-        wandb.agent(sweep_id, function=lambda: _wandb_exe(config), count=cst.WANDB_SWEEP_MAX_RUNS)
+        
+        if sweep_id is None:
+            print("Getting new sweep_id")
+            sweep_id = wandb.sweep(
+                sweep={
+                    'command': ["${env}", "python3", "${program}", "${args}"],
+                    'program': "src/utils_training_loop.py",
+                    'name':    config.WANDB_SWEEP_NAME,
+                    'method':  config.SWEEP_METHOD,
+                    'metric':  config.SWEEP_METRIC,
+                    'parameters': {
+                        **HP_DICT_MODEL[config.CHOSEN_MODEL].sweep
+                    }
+                },
+                project=config.PROJECT_NAME
+            )
+
+        print(f"Setting up sweep agent with sweep_id {sweep_id}")
+        wandb.agent(sweep_id, project=config.PROJECT_NAME,function=lambda: _wandb_exe(config), count=cst.WANDB_SWEEP_MAX_RUNS)
+        # run_mp_agent(config,fun=lambda: _wandb_exe(config))
+
+        # processes = []
+        # set_start_method("spawn")
+        # for i in range(2):
+        #     p = Process(target=run_mp_agent, args=(config,_wandb_exe,1+i,sweep_id))
+        #     print(p)
+        #     p.start()
+        #     print(f"Starting process on device {i+1}")
+        #     processes.append(p)
+        
+        # for p in processes:
+        #     p.join()
+        # print('Done!\a')
+        
     else:
         # NO SWEEP
         _wandb_exe(config)

@@ -1,7 +1,6 @@
 from enum import Enum
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
-import torch
+# os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import numpy as np
 
 
@@ -367,9 +366,8 @@ NUM_CLASSES = 3
 
 
 N_DATA_WORKERS=128
-DEVICE_TYPE = 'cuda' if torch.cuda.is_available() else 'cpu'
-NUM_GPUS = None if DEVICE_TYPE == 'cpu' else torch.cuda.device_count()
-print(DEVICE_TYPE, NUM_GPUS)
+DEVICE_TYPE=None
+NUM_GPUS=None
 
 PROJECT_NAME = "LOB-CLASSIFIERS-({})"
 DIR_EXPERIMENTS = "data/experiments/" + PROJECT_NAME

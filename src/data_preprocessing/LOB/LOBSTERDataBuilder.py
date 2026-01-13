@@ -76,7 +76,7 @@ class LOBSTERDataBuilder:
         exists = os.path.exists(cst.DATA_PICKLES + self.F_NAME_PICKLE)
 
         if self.is_data_preload and exists:
-            # print("Reloaded, not recomputed, nice!")
+            print("Data Reloaded from pickle file, not recomputed, nice!")
             self.__data = self.__deserialize_dataset()
         else:
             out_df = lbu.from_folder_to_unique_df(

@@ -101,14 +101,14 @@ class LOBDataset(data.Dataset):
             # print(OHLC.describe())
             return OHLC
 
-        Xs, Ys, Ss, ignore_indices_len = list(), list(), list(), [0]
+        Xs, Ys, Ss, ignore_indices_len, index_array = list(), list(), list(), [0], list()
         for stock in stocks_list:
             # print("Handling", stock, "for dataset", dataset_type)
             databuilder = map_stock_databuilder[stock]
 
-            data_x, data_y = databuilder.get_X_nx40(), databuilder.get_Y_n()
+            data_x, data_y, seq_lens = databuilder.get_X_nx40(), databuilder.get_Y_n(), databuilder.get_sequence_lengths()
             # data_x_umb = databuilder.get_Xung_nx40()
-
+            index_array.append(self.get_valid_sample_indices(seq_lens, self.sample_size))
             Xs.append(data_x)
             Ys.append(data_y)
             Ss.extend([stock]*len(data_y))
@@ -119,7 +119,10 @@ class LOBDataset(data.Dataset):
             # OHLC = OHLC.iloc[:data_x.shape[0], :]
             # print("saving", OHLC.shape)
             # write_data(OHLC, "data/", "OHLC_{}.data".format(stock))
+        
+        index_array= self.merge_valid_indices(index_array, self.sample_size)
 
+        self.index_array= index_array
         # removes the indices that are the first sample_size
         ignore_indices = []
         ind_sf = 0
@@ -156,10 +159,11 @@ class LOBDataset(data.Dataset):
     def __len__(self):
         """ Denotes the total number of samples. """
         # len(self.indexes_chosen)
-        return len(self.y)-self.sample_size
-
+        return len(self.index_array)
+    
     def __getitem__(self, index):
         """ Generates samples of data. """
+        index=self.index_array[index]
         x = self.x[index: index + self.sample_size]
         y = self.y[index + self.sample_size - 1]
         s = self.stock_sym_name[index]
@@ -224,3 +228,56 @@ class LOBDataset(data.Dataset):
         # data = data.fillna(method="ffill")
 
         return data, means_dict, stds_dict
+
+    def get_valid_sample_indices(self,df_lengths: list[int], window_length: int) -> list[int]:
+        """
+        Given a list of dataframe lengths and a window length, return indices that can be 
+        accessed in a concatenated dataframe such that the window [index, index+window_length) 
+        stays within a single original dataframe.
+        
+        Args:
+            df_lengths: List of lengths of individual dataframes before concatenation
+            window_length: Size of the window (index to index+window_length)
+        
+        Returns:
+            List of valid indices in the concatenated dataframe
+        """
+        valid_indices = []
+        current_pos = 0
+        
+        for df_len in df_lengths:
+            # For each dataframe, valid indices are those where:
+            # index + window_length <= current_pos + df_len
+            # which means: index <= current_pos + df_len - window_length
+            
+            max_valid_index = current_pos + df_len - window_length
+            
+            # Add all valid indices for this dataframe
+            for idx in range(current_pos, max_valid_index + 1):
+                valid_indices.append(idx)
+            
+            current_pos += df_len
+        
+        return valid_indices
+    
+
+    def merge_valid_indices(self,indices_list: list[list[int]], offset: int) -> list[int]:
+        """
+        Merge multiple lists of valid window indices with a single offset applied cumulatively.
+        
+        Args:
+            indices_list: List of valid indices arrays
+            offset: Scalar offset (window size) applied cumulatively between each list
+        
+        Returns:
+            Merged list of valid indices
+        """
+        merged = []
+        current_offset = 0
+        
+        for indices in indices_list:
+            merged.extend([idx + current_offset for idx in indices])
+            if indices:  # Only add offset if list is not empty
+                current_offset = indices[-1] + current_offset + offset
+        
+        return sorted(merged)

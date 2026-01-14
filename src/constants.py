@@ -1,6 +1,8 @@
 from enum import Enum
-import torch
+import os
+# os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import numpy as np
+import torch
 
 
 '''
@@ -52,6 +54,8 @@ ALPHA_NFLX = 25e-6
 ALPHA_SOFI = 11e-5
 ALPHA = 1e-6
 
+DEFAULT_REAL_PERCENT=1
+
 
 class LearningHyperParameter(str, Enum):
     OPTIMIZER = "optimizer_name"
@@ -75,6 +79,30 @@ class LearningHyperParameter(str, Enum):
     FI_HORIZON = 'fi_horizon_k'
     NUM_SNAPSHOTS = 'num_snapshots'
     META_HIDDEN = 'meta_hidden'
+    SSM_SIZE= "ssm_size"
+    SSM_LR_BASE="ssm_lr_base"
+    LR_FACTOR="lr_factor"
+    N_BLOCKS="blocks"
+    CONJ_SYM="conj_sym"
+    D_MODEL="d_model"
+    C_INIT="C_init"
+    DISCRETIZATION="discretization"
+    DT_MIN="dt_min"
+    DT_MAX="dt_max"
+    CLIP_EIGS="clip_eigs"
+    BIDIRECTIONAL="bidirectional"
+    N_LAYERS="n_layers"
+    N_MSG_LAYERS="n_message_layers"
+    N_BOOK_PRE_LAYERS="n_book_pre_layers"
+    N_BOOK_POST_LAYERS="n_book_post_layers"
+    ACT_FUNC="activation_fn"
+    CLASS_MODE="cls_mode" #mean pool or last element (of sequence dim)
+    PRENORM="prenorm"
+    BATCHNORM="batchnorm"
+    BN_MOMENTUM="bn_momentum"
+    OPTIM_CONFIG="opt_config"
+    DT_GLOBAL="dt_global"
+
 
 
 class STK_OPEN(str, Enum):
@@ -88,6 +116,36 @@ class Optimizers(Enum):
     ADAM = "Adam"
     RMSPROP = "RMSprop"
     SGD = "SGD"
+
+#MODEL choices, mostly for S5 models. 
+class C_Initialisers(Enum):
+    TRUNC="trunc_standard_normal"
+    LECUN="lecun_normal"
+    COMPLEX="complex_normal"
+
+class ClassificationModes(Enum):
+    POOL="pool"
+    LAST="last"
+
+class ActivationFunctions(Enum):
+    FULLGLU="full_glu"
+    HALFGLU1="half_glu1"
+    HALFGLU2="half_glu2"
+    GELU="gelu"
+
+class OptimisationConfigurations(Enum):
+    STANDARD="standard"
+    BANDCDECAY="BandCdecay"
+    BFASTCDECAY="BfastandCdecay"
+    NOBCDECAY="noBCdecay"
+
+class DiscretizationMethods(Enum):
+    ZOH="zoh"
+    BILINEAR="bilinear"
+
+
+
+
 
 
 class Metrics(Enum):
@@ -134,6 +192,10 @@ class WinSize(Enum):
     EVENTS3 = 3
     EVENTS5 = 5
     EVENTS10 = 10
+    EVENTS20 = 20
+    EVENTS30 = 30
+    EVENTS50 = 50
+    EVENTS100 = 100
 
     # MIN01 = 60
     # MIN05 = 60 * 5
@@ -182,6 +244,27 @@ class Models(str, Enum):
     METALOB = "MetaLOB"
     MAJORITY = "Majority"
 
+    S5BOOK= "S5_Book"
+    S5MSGS="S5_Messages"
+    S5MSGSBOOK="S5_Messages_Book"
+
+
+class LBModels(str, Enum):
+    LARGESAMPLE = "large_model_sample"
+    COLETTA = "coletta"
+    BASELINE= "cont"
+    RWKV6 = "rwkv6"
+    RWKV4 = "rwkv4"
+    S5 = "s5_main"
+    S5_NEW = "s5_new"
+    
+class RealGenType(str, Enum):
+    REAL = "data_real"
+    GEN = "data_gen"
+
+
+    
+
 
 class DatasetFamily(str, Enum):
     FI = "FI"
@@ -226,8 +309,11 @@ class Stocks(list, Enum):
     WING = ["WING"]
     SHLS = ["SHLS"]
     LSTR = ["LSTR"]
+    GOOG = ["GOOG"]
+    INTC = ["INTC"]
     FI = ["FI"]
     ALL = ["SOFI", "NFLX", "CSCO", "WING", "SHLS", "LSTR"]
+    LOBBENCH=["GOOG","INTC"]
 
 
 class Periods(dict, Enum):
@@ -239,7 +325,7 @@ class Periods(dict, Enum):
     }
 
     JULY2021 = {
-        'first_day': '2021-07-01', 'last_day': '2021-08-06',
+        'first_day': '2021-07-01', 'last_day': '2021-07-15',
         'train': ('2021-07-01', '2021-07-08'),  # 'train': ('2021-07-01', '2021-07-22'),
         'val':   ('2021-07-09', '2021-07-12'),  # 'val': ('2021-07-23', '2021-07-29'),
         'test':  ('2021-07-13', '2021-07-15'),  # 'test': ('2021-07-30', '2021-08-06'),
@@ -250,6 +336,69 @@ class Periods(dict, Enum):
         'train': ('2022-02-01', '2022-02-07'),
         'val': ('2022-02-08', '2022-02-11'),
         'test': ('2022-02-14', '2022-02-16'),
+    }
+    
+    JUNE2012 = {
+        'first_day': '2012-06-21', 'last_day': '2012-06-21',
+        'train': ('2012-06-21', '2012-06-21'),
+        'val': ('2012-06-21', '2012-06-21'),
+        'test': ('2012-06-21', '2012-06-21'),
+    }
+    JAN2023 = {
+        'first_day': '2023-01-04', 'last_day': '2023-01-13',
+        'train': ('2023-01-04', '2023-01-11'),
+        'val': ('2023-01-12', '2023-01-12'),
+        'test': ('2023-01-13', '2023-01-13'),
+    }
+    JAN2023_S5_GOOG = {
+        'first_day': '2023-01-04', 'last_day': '2023-01-13',
+        'train': ('2023-01-04', '2023-01-11'),
+        'val': ('2023-01-12', '2023-01-12'),
+        'test': ('2023-01-13', '2023-01-13'),
+    }
+    JAN2023_S5_INTC = {
+        'first_day': '2023-01-04', 'last_day': '2023-01-13',
+        'train': ('2023-01-04', '2023-01-11'),
+        'val': ('2023-01-12', '2023-01-12'),
+        'test': ('2023-01-13', '2023-01-13'),
+    }
+    JAN2019_Coletta_GOOG = { # Coletta Model [GOOG]
+        'first_day': '2019-01-07', 'last_day': '2019-01-08',
+        'train': ('2019-01-07', '2019-01-07'),
+        'val': ('2019-01-08', '2019-01-08'),
+        'test': ('2019-01-08', '2019-01-08'),
+    }
+    JAN2022_Coletta_INTC = { # Coletta Model [INTC]
+        'first_day': '2022-01-06', 'last_day': '2022-01-10',
+        'train': ('2022-01-06', '2022-01-07'),
+        'val': ('2022-01-10', '2022-01-10'),
+        'test': ('2022-01-10', '2022-01-10'),
+    }
+    JAN2019_S5_NEW ={ # S5_new Model [GOOG]
+        'first_day': '2019-01-02', 'last_day': '2019-12-12',
+        'train': ('2019-01-02', '2019-10-31'),
+        'val': ('2019-11-01', '2019-11-31'),
+        'test': ('2019-12-01', '2019-12-31'),
+    }
+    JAN2023_CONT = { 
+        'first_day': '2023-01-03', 'last_day': '2023-01-13',
+        'train': ('2023-01-03', '2023-01-11'),
+        'val': ('2023-01-12', '2023-01-12'),
+        'test': ('2023-01-13', '2023-01-13'),
+    }
+    JAN2023_RWKV6 = { 
+        'first_day': '2023-01-03', 'last_day': '2023-01-13',
+        'train': ('2023-01-03', '2023-01-11'),
+        'val': ('2023-01-12', '2023-01-12'),
+        'test': ('2023-01-13', '2023-01-13'),
+        'extra':('test','test')
+    }
+    JAN2023_RWKV4 = { 
+        'first_day': '2023-01-03', 'last_day': '2023-01-13',
+        'train': ('2023-01-03', '2023-01-11'),
+        'val': ('2023-01-12', '2023-01-12'),
+        'test': ('2023-01-13', '2023-01-13'),
+        'extra':('test1','test1')
     }
 
     FI = {}
@@ -305,17 +454,20 @@ class ExpIndependentVariables(Enum):
 N_LOB_LEVELS = 10
 NUM_CLASSES = 3
 
+
+N_DATA_WORKERS=128
 DEVICE_TYPE = 'cuda' if torch.cuda.is_available() else 'cpu'
-NUM_GPUS = None if DEVICE_TYPE == 'cpu' else torch.cuda.device_count()
+NUM_GPUS = None if DEVICE_TYPE == 'cpu' else 1
 
 PROJECT_NAME = "LOB-CLASSIFIERS-({})"
 DIR_EXPERIMENTS = "data/experiments/" + PROJECT_NAME
 DIR_SAVED_MODEL = "data/saved_models/" + PROJECT_NAME
 
-DATA_SOURCE = "data/"
-DATASET_LOBSTER = "LOBSTER_6/unzipped/"
-DATASET_FI = "FI-2010/BenchmarkDatasets/"
-DATA_PICKLES = "data/pickles/"
+DATA_SOURCE = "/data1/sascha/data/"
+DATASET_LOBBENCH = "lob_bench_data/evalsequences/"
+DATASET_LOBSTER = "LOBCAST/lobster_all/2021 sample/"
+DATASET_FI = "fi_2010_all/BenchmarkDatasets/"
+DATA_PICKLES = "lob_bench/lobcast_src/data_pickles/"
 
 
 WANDB_SWEEP_MAX_RUNS = 20

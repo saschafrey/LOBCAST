@@ -223,13 +223,17 @@ class NNEngine(pl.LightningModule):
 
     def __log_wandb_cm(self, ys, predictions, model_step, si):
         if self.remote_log is not None:  # log to wandb
-            name = model_step.value + f"_conf_mat_{si}"
-            self.remote_log.log({name: wandb.plot.confusion_matrix(
-                probs=None,
-                y_true=ys, preds=predictions,
-                class_names=[cl.name for cl in cst.Predictions],
-                title=name)},
-            )
+            try:
+                name = model_step.value + f"_conf_mat_{si}"
+                self.remote_log.log({name: wandb.plot.confusion_matrix(
+                    probs=None,
+                    y_true=ys, preds=predictions,
+                    class_names=[cl.name for cl in cst.Predictions],
+                    title=name)},
+                )
+            except Exception as e:
+                # Silently ignore wandb errors (e.g., wandb not initialized in child processes)
+                pass
 
     def configure_optimizers(self):
 

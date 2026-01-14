@@ -321,8 +321,7 @@ def from_folder_to_unique_df(
         frames.append(tmp_df)
 
     # stacks all the days one on top of the other
-    result = pd.concat(frames, ignore_index=False)
-    return result
+    return frames
 
 
 def read_sub_routine(file_7z: str, first_date: str = "1990-01-01",
@@ -347,7 +346,6 @@ def read_sub_routine(file_7z: str, first_date: str = "1990-01-01",
     last_date = datetime.strptime(last_date, "%Y-%m-%d")
 
     all_period = {}  # day :  df
-
     path = path + file_7z
     print("Reading all", type_file, "files...")
     for file in tqdm.tqdm(sorted(os.listdir(path))):
@@ -443,11 +441,11 @@ def lobster_to_gran_df(
 
     orderbook_df = orderbook_df.sort_values(by="date").reset_index(drop=True).copy()
     orderbook_df.drop(columns=['seconds'], inplace=True)
-    orderbook_df = orderbook_df.set_index('date')
+    # orderbook_df = orderbook_df.set_index('date')
 
     # removes the first and last *boundaries_purge time units in the dataframe
     purge = pd.Timedelta(boundaries_purge, "sec")
-    orderbook_df = orderbook_df[orderbook_df.index.values[0] + purge: orderbook_df.index.values[-1] - purge]
+    orderbook_df = orderbook_df[(orderbook_df['date'] >= orderbook_df['date'].iloc[0] + purge) & (orderbook_df['date'] <= orderbook_df['date'].iloc[-1] - purge)]
     return orderbook_df
 
 

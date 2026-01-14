@@ -1,6 +1,8 @@
 
 
 import os
+import pandas as pd
+import tqdm
 import src.data_preprocessing.preprocessing_utils as ppu
 import src.utils.utils_generic as util
 import src.utils.utilis_lobster_datasource as lbu
@@ -79,7 +81,7 @@ class LOBSTERDataBuilder:
             print("Data Reloaded from pickle file, not recomputed, nice!")
             self.__data = self.__deserialize_dataset()
         else:
-            out_df = lbu.from_folder_to_unique_df(
+            out_frames = lbu.from_folder_to_unique_df(
                 cst.DATA_SOURCE + self.lobster_dataset_name,
                 level=self.n_lob_levels,
                 granularity=self.data_granularity,
@@ -87,15 +89,22 @@ class LOBSTERDataBuilder:
                 last_date=self.start_end_trading_day[1],
                 boundaries_purge=self.crop_trading_day_by
             )
-            out_df = out_df.fillna(method="ffill")
-            out_df = out_df.drop(
-                out_df.index[
-                    (np.where((out_df.index > '2021-08-03') & (out_df.index < '2021-08-05')))[0]
-                ]
-            )
+            labeled_frames = list()
+            frame_lengths=list()
+            for frame_df in tqdm.tqdm(out_frames):
+                frame_df=self.__label_dataset(frame_df)
+                frame_df=frame_df.fillna(method="ffill")
+                labeled_frames.append(frame_df)
+                frame_lengths.append(len(frame_df))
+            result = pd.concat(labeled_frames, ignore_index=True)
+            # out_df = out_df.drop(
+            #     out_df.index[
+            #         (np.where((out_df.index > '2021-08-03') & (out_df.index < '2021-08-05')))[0]
+            #     ]
+            # )
 
             days = list()
-            for date in out_df.index:
+            for date in result['date']:
                 date = str(date)
                 yyyymmdd = date.split()[0]
                 day = yyyymmdd.split('-')[2]
@@ -116,8 +125,9 @@ class LOBSTERDataBuilder:
             # )
             #
             # self.__data_un_gathered = out_df_ung
-
-            self.__data = out_df
+            self.__frame_lengths = frame_lengths
+            self.__data = result
+            # self.__data=labeled_frames
 
         if self.is_data_preload and not exists:
             self.__serialize_dataset()
@@ -143,20 +153,21 @@ class LOBSTERDataBuilder:
     #     # needed to update the mid-prices columns, after the normalization, mainly for visualization purposes
     #     self.__data = ppu.add_midprices_columns(self.__data, self.window_size_forward, self.window_size_backward)
 
-    def __label_dataset(self):
+    def __label_dataset(self,data):
         if self.config.CHOSEN_MODEL == cst.Models.DEEPLOBATT:
             for winsize in cst.FI_Horizons:
-                self.__data = ppu.add_lob_labels_march_2023(self.__data, winsize.value, self.window_size_backward, cst.ALPHA)
-                self.__data = self.__data.rename(columns={'y': f'y{winsize.value}'})
-            self.__data['y'] = self.__data[[f'y{winsize.value}' for winsize in cst.FI_Horizons]].values.tolist()
-            self.__data = self.__data.drop([f'y{winsize.value}' for winsize in cst.FI_Horizons], axis=1)
+                data = ppu.add_lob_labels_march_2023(data, winsize.value, self.window_size_backward, cst.ALPHA)
+                data = data.rename(columns={'y': f'y{winsize.value}'})
+            data['y'] = data[[f'y{winsize.value}' for winsize in cst.FI_Horizons]].values.tolist()
+            data = data.drop([f'y{winsize.value}' for winsize in cst.FI_Horizons], axis=1)
         else:
-            self.__data = ppu.add_lob_labels_march_2023(
-                self.__data,
+            data = ppu.add_lob_labels_march_2023(
+                data,
                 self.window_size_forward,
                 self.window_size_backward,
                 cst.ALPHA
             )
+        return data
 
     # def plot_dataset(self):
     #     ppu.plot_dataframe_stats(
@@ -181,7 +192,6 @@ class LOBSTERDataBuilder:
         # print("Generating dataset", self.dataset_type)
 
         self.__read_dataset()
-        self.__label_dataset()
         # self.__normalize_dataset()
 
         # TOO MUCH MEMORY! AVOID
@@ -199,13 +209,16 @@ class LOBSTERDataBuilder:
         # self.plot_dataset()
 
     def get_X_nx40(self):
-        return self.__data.iloc[:, :-5]  # in the last 5 columns there are predictions and shifts
+        return self.__data.iloc[:, :-6]  # in the last 5 columns there are predictions and shifts
 
-    def get_Xung_nx40(self):
-        return self.__data_un_gathered.iloc[:, :]
+    # def get_Xung_nx40(self):
+    #     return self.__data_un_gathered.iloc[:, :]
 
     def get_Y_n(self):
         if self.config.CHOSEN_MODEL == cst.Models.DEEPLOBATT:
             return np.asarray(self.__data[ppu.DataCols.PREDICTION.value].values.tolist())
         else:
             return self.__data[ppu.DataCols.PREDICTION.value]
+
+    def get_sequence_lengths(self):
+        return [fl for fl in self.__frame_lengths]

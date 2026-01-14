@@ -74,7 +74,7 @@ HP_DICT_MODEL = {
 def __run_training_loop(config: Configuration, model_params=None):
     """ Set the model parameters and lunch the training loop. """
 
-    def core(config, model_params):
+    def core(config: Configuration, model_params):
 
         # if no hyperparameter tuning must be done, use the fixed parameters
         if not config.IS_TUNE_H_PARAMS:

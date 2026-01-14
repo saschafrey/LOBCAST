@@ -1,5 +1,6 @@
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import src.utils.utils_training_loop as tlu
 from src.config import Configuration
@@ -57,7 +58,7 @@ def experiment_lobster(execution_plan, dataset, PREFIX=None, is_debug=False, jso
                         cf.CHOSEN_MODEL = mod
 
                         cf.IS_WANDB = int(not is_debug)
-                        cf.IS_TUNE_H_PARAMS = int(not is_debug)
+                        cf.IS_TUNE_H_PARAMS = False #int(not is_debug)
 
                         tlu.run(cf)
 
@@ -70,16 +71,18 @@ if __name__ == '__main__':
 
     EXE_PLAN = {
         cst.Servers.ANY: [
-            (cst.Models.MLP, {'forward_windows': [cst.WinSize.EVENTS5], 'seed': [500]})
+            (cst.Models.MLP, {'forward_windows': [cst.WinSize.EVENTS5], 'seed': [500]}),
+            # (cst.Models.DEEPLOB, {'forsward_windows': [cst.WinSize.EVENTS5], 'seed': [500]}),
+            (cst.Models.BINCTABL, {'forward_windows': [cst.WinSize.EVENTS5], 'seed': [500]}),
         ]
     }
 
     experiment_lobster(
         EXE_PLAN,
         dataset=cst.DatasetFamily.LOB,
-        PREFIX='LOBSTER-EXPERIMENT',
+        PREFIX='REPRODUCE-PAPER',
         is_debug=False,
-        json_dir="final_data/LOB-FEB-TESTS/jsons/",
+        json_dir="final_data/REPRODUCE-PAPER/jsons/",
         target_dataset_meta=cst.DatasetFamily.LOB,
         peri=cst.Periods.JULY2021
     )
